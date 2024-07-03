@@ -1,0 +1,164 @@
+---
+title: "supplement_figures"
+author: "Javed Aman"
+date: "2024-07-03"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(readr)
+library(ggplot2)
+library(mclust)
+library(ggdendro)
+library(grid)
+library(tidyverse)
+library(tibble)
+library(vegan)
+library(dendextend)
+library(colorspace)
+library(xlsx)
+```
+
+```{r load}
+pep_kin_df <- read.csv("./out/siteQuant_optosos10m_binarize.csv", stringsAsFactors=TRUE)
+kin_pep_df <- setNames(data.frame(t(pep_kin_df)), rownames(pep_kin_df))
+kin_pep_name_df <- tibble::rownames_to_column(kin_pep_df, "kinase")
+```
+
+```{r cluster}
+kin_dist_df <- vegdist(kin_pep_df, method="euclidean", binary=TRUE)
+kin_clust_df <- hclust(kin_dist_df)
+
+pep_dist_df <- vegdist(pep_kin_df, method="euclidean", binary=TRUE)
+pep_clust_df <- hclust(pep_dist_df)
+
+```
+
+```{r kinase_order}
+cat(paste('"',kin_clust_df$labels[kin_clust_df$order],'"', collapse=',',sep=''))
+
+kinase_order = c("ERK2","P38A","CDK8","MTOR","CDK6","CDK5","CDK1","CDK7","HIPK2","DYRK2","CDK10","CDK13","CDK9","GSK3B","PRP4","HASPIN","MPSK1","PBK","BUB1","LATS1","CHK1","PRKX","PAK5","PAK1","PKACA","AURA","ATR","DRAK1","CHK2","AKT3","P90RSK","P70S6K","SNRK","AMPKA2","PRPK","CK1E","TBK1","ULK1","MEK1","MLK1","MST2","OSR1","MST4","PKCI","CAMKK2","LKB1","MAP3K15","TNIK","TAO1","VRK1","TAK1","CK2A1","ATM","PLK1","COT","TLK2")
+kin_clust_df <- rotate(kin_clust_df, order=kinase_order)
+```
+
+```{r dendro}
+kin_dendro_df <- as.dendrogram(kin_clust_df)
+dendro_plot <- ggdendrogram(data = kin_dendro_df, rotate = TRUE) + 
+  scale_y_reverse()
+print(dendro_plot)
+
+dendro_plot <- dendro_plot + theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+print(dendro_plot)
+```
+
+```{r heatmap}
+exp_long_df <- pivot_longer(kin_pep_name_df, cols = -c(kinase), names_to = "peptide", values_to = "match")
+exp_long_df$kinase <- factor(x = exp_long_df$kinase,
+                             levels=kin_clust_df$labels[kin_clust_df$order],
+                             ordered=TRUE)
+exp_long_df$peptide <- factor(x = exp_long_df$peptide,
+                              levels=pep_clust_df$order,
+                              ordered = TRUE)
+heatmap_plot <- ggplot(data = exp_long_df, aes(x = kinase, y = peptide)) +
+  geom_tile(aes(fill = match)) +
+  scale_fill_gradient2(high = "#0066CC") +
+  ylab("matched phosphosites") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.title.x=element_text(size = 8, face="bold", vjust=-1),
+        legend.position = "none",
+        axis.text.y = element_text(hjust = 0),
+        text = element_text(family="Arial")) +
+  coord_flip()
+
+print(heatmap_plot)
+```
+
+```{r zscore_plot}
+excel_file <- "./out/kinase_z_scores_flip.xlsx"
+wb <- loadWorkbook(excel_file)
+df <- read.xlsx(excel_file, sheetName='kinases', header=TRUE)
+df$kinase <- factor(x = df$kinase,
+                    levels=kin_clust_df$labels[kin_clust_df$order],
+                    ordered=TRUE)
+df$sig <- ifelse(df$fdr <= 0.10, "sig", "not_sig")
+color_palette <- c("sig" = "#0066CC", "not_sig" = "#FFCC00")
+zscore_plot <- ggplot(df, aes(x=kinase, y=z, fill=factor(sig))) +
+  geom_bar(stat="identity", position = "dodge") +
+  ylab("z test statistic") + 
+  scale_fill_manual(values = color_palette, labels = c("sig" = "pass", "not_sig" = "fail"))+
+  theme(axis.title.y=element_blank(),
+        axis.text.y = element_text(hjust = 0),
+        axis.title.x = element_text(size=6, face="bold", vjust=3),
+        panel.grid.minor = element_blank(),
+        legend.key.height = unit(1, "cm"),
+        legend.text = element_text(angle = 90, hjust = 0.5, vjust = 0.5),
+        legend.title = element_text(angle = 90, hjust=0.5),
+        text = element_text(family="Arial", color="black")) +
+  
+  coord_flip() +
+  labs(fill = "FDR \u2264 10%") +
+  #guides(fill = guide_legend(title.position = "bottom"))
+  guides(fill = guide_legend(title.position = "bottom", label.position="top"))
+plot(zscore_plot)
+```
+
+```{r final_plot}
+grid.newpage()
+print(dendro_plot, vp = viewport(x = 0.07, y = 0.497, width = 0.1, height= 1.08))
+print(zscore_plot, vp=viewport(x=0.75, y=0.495, width=0.3, height=1.01))
+print(heatmap_plot, vp = viewport(x = 0.35, y = 0.5, width = 0.5, height = 1.0))
+```
+
+
+```{r enrichment_variation_plots}
+enrichment_plot <- function(df, sheet, fdr=0.10) {
+  df$log2FC <- log2(df$enrichment)
+  df = df[order(df$log2FC),]
+  df$kinase <- factor(x = df$kinase,
+                             levels=df$kinase,
+                             ordered=TRUE)
+  df$sig <- ifelse(df$fdr <= fdr, "sig", "not_sig")
+  color_palette <- c("sig" = "#0066CC", "not_sig" = "#FFCC00")
+  
+  legend_label <- paste("FDR \u2264 ", fdr*100, '%', sep='')
+  enrich_plot <- ggplot(df, aes(x=kinase, y=log2FC, fill=factor(sig))) +
+    geom_bar(stat="identity", position = "dodge") +
+    #ggtitle(sheet) +
+    ylab("log2(enrichment ratio)") + 
+    theme(axis.text.x = element_text(size = 12, angle = 0, vjust=0.0, hjust=0.5),
+          axis.title.x = element_text(size = 12, face="bold", vjust=0.5, hjust=0.5),
+          axis.title.y = element_text(size = 12, face="bold", hjust=0.5),
+          panel.grid.minor = element_blank(),
+          legend.key.height = unit(1, "cm"),
+          legend.text = element_text(angle = 90, hjust = 0.5, vjust = 0.5),
+          legend.title = element_text(angle = 90, hjust=0.5),
+          text = element_text(family="Arial", color="black")) +
+    #geom_text(aes(label=experiment_count), position=position_dodge(width=0.9), vjust=-0.25, size=2) +
+    #geom_text(aes(label=background_count), position=position_dodge(width=0.9), vjust=1.00, size=2) +
+    scale_fill_manual(values = color_palette, labels = c("sig" = "pass", "not_sig" = "fail")) +
+    labs(fill = legend_label) +
+    guides(fill = guide_legend(title.position = "bottom", label.position="top")) +
+    coord_flip()
+  
+  return (enrich_plot)
+  
+}
+
+excel_file <- "./out/enrichment_variations.xlsx"
+wb <- loadWorkbook(excel_file)
+sheets <- names(getSheets(wb))
+
+summary_sheet_df = read.xlsx(excel_file, sheetName=sheets[1], header=TRUE)
+enrichment_sheets = sheets[2:length(sheets)]
+for (sheet in enrichment_sheets){
+  df <- read.xlsx(excel_file, sheetName=sheet, header=TRUE)
+  p <- enrichment_plot(df, sheet, summary_sheet_df[summary_sheet_df$name == sheet,]$fdr.threshold)
+  fig_file <- paste(sheet,".png", sep="")
+  ggsave(fig_file, plot=p, width = 11, height=9.5, units="in", dpi=250, limitsize = FALSE)
+}
+```
