@@ -15,6 +15,8 @@ Rstudio 2024.04.2 Build 764
 
 ## Python
 
+python-calamine 
+
 pandas
 
 biopython
