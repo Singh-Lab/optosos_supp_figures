@@ -35,6 +35,8 @@ statsmodels
 
 statistics
 
+xlsxwriter
+
 ## R
 
 readr
